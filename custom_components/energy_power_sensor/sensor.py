@@ -19,6 +19,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -35,6 +36,7 @@ from homeassistant.util import dt as dt_util
 from .calculation import EnergyAccumulator
 from .const import (
     BASE_UNITS,
+    CONF_IGNORE_UNAVAILABLE,
     CONF_INPUT_UNITS,
     CONF_MAX_POWER,
     CONF_OUTLIER_THRESHOLD,
@@ -45,6 +47,7 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONVERTERS,
     DEFAULT_OUTPUT_UNITS,
+    DOMAIN,
     TYPE_ENERGY,
     UNIT_AUTO,
 )
@@ -78,11 +81,15 @@ class EnergyPowerSensor(SensorEntity, RestoreEntity):
         self._interval = int(options.get(CONF_UPDATE_INTERVAL, 0) or 0)
         self._max_power: float | None = options.get(CONF_MAX_POWER)
         self._outlier_threshold: float | None = options.get(CONF_OUTLIER_THRESHOLD)
+        self._ignore_unavailable = bool(options.get(CONF_IGNORE_UNAVAILABLE, False))
         self._converter = CONVERTERS[self._type]
         self._base_unit = BASE_UNITS[self._type]
         self._accumulator: EnergyAccumulator | None = None
         self._ignored_count = 0
         self._warned_units: set[str] = set()
+        self._unavailable: list[str] = []
+        self._missing: set[str] = set()
+        self._issue_id = f"missing_entities_{entry.entry_id}"
 
         self._attr_name = entry.title
         self._attr_unique_id = entry.entry_id
@@ -131,6 +138,10 @@ class EnergyPowerSensor(SensorEntity, RestoreEntity):
         # Inputs from other integrations may not be loaded yet during startup.
         self.async_on_remove(async_at_started(self.hass, self._async_started))
 
+    async def async_will_remove_from_hass(self) -> None:
+        """Clear any repair issue raised by this sensor."""
+        ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+
     @callback
     def _async_started(self, _hass: HomeAssistant) -> None:
         self._recalculate()
@@ -156,16 +167,17 @@ class EnergyPowerSensor(SensorEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return diagnostic attributes."""
+        attributes: dict[str, Any] = {"unavailable_entities": self._unavailable}
         if self._accumulator is not None:
             acc = self._accumulator
-            return {
+            return attributes | {
                 "outliers_detected": acc.outlier_count,
                 "last_outlier_entity": acc.last_outlier_entity,
                 "last_outlier_time": (
                     acc.last_outlier_time.isoformat() if acc.last_outlier_time else None
                 ),
             }
-        return {"outliers_ignored": self._ignored_count}
+        return attributes | {"outliers_ignored": self._ignored_count}
 
     def _read(self, entity_id: str) -> float | None:
         """Return an input's value in the base unit, or None if unusable."""
@@ -204,10 +216,48 @@ class EnergyPowerSensor(SensorEntity, RestoreEntity):
     @callback
     def _recalculate(self) -> None:
         readings = {eid: self._read(eid) for eid in self._all_entities}
+        self._unavailable = [eid for eid, value in readings.items() if value is None]
+        self._update_missing_issue()
         if self._accumulator is not None:
             self._update_energy(readings)
         else:
             self._update_power(readings)
+
+    @callback
+    def _update_missing_issue(self) -> None:
+        """Raise a repair issue for inputs that no longer exist.
+
+        Only checked once Home Assistant is running, so inputs from integrations
+        that are still loading at startup are not reported.
+        """
+        if not self.hass.is_running:
+            return
+        missing = {eid for eid in self._all_entities if self.hass.states.get(eid) is None}
+        if missing == self._missing:
+            return
+        for eid in sorted(missing - self._missing):
+            _LOGGER.warning(
+                "%s: input %s does not exist. Remove or replace it in the "
+                "integration options",
+                self.entity_id,
+                eid,
+            )
+        self._missing = missing
+        if not missing:
+            ir.async_delete_issue(self.hass, DOMAIN, self._issue_id)
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="missing_entities",
+            translation_placeholders={
+                "name": self.name or self.entity_id,
+                "entities": "\n".join(f"- `{eid}`" for eid in sorted(missing)),
+            },
+        )
 
     def _update_energy(self, readings: dict[str, float | None]) -> None:
         assert self._accumulator is not None
@@ -216,13 +266,16 @@ class EnergyPowerSensor(SensorEntity, RestoreEntity):
             self._attr_native_value = round(self._to_output(total), PRECISION)
 
     def _update_power(self, readings: dict[str, float | None]) -> None:
-        if any(value is None for value in readings.values()):
+        if self._unavailable and (
+            not self._ignore_unavailable or len(self._unavailable) == len(readings)
+        ):
             self._attr_available = False
             return
         self._attr_available = True
 
-        total = sum(readings[eid] for eid in self._sum) - sum(
-            readings[eid] for eid in self._subtract
+        # Unavailable inputs only get here when ignored: they count as 0.
+        total = sum(readings[eid] or 0.0 for eid in self._sum) - sum(
+            readings[eid] or 0.0 for eid in self._subtract
         )
         value = self._to_output(total)
         if self._outlier_threshold is not None and abs(value) > self._outlier_threshold:

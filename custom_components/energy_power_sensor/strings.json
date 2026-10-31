@@ -36,14 +36,16 @@
           "subtract_entities": "Sensors to subtract",
           "output_unit": "Output unit",
           "update_interval": "Update interval",
-          "outlier_threshold": "Outlier threshold"
+          "outlier_threshold": "Outlier threshold",
+          "ignore_unavailable": "Ignore unavailable inputs"
         },
         "data_description": {
           "sum_entities": "Sensors whose values are added to the total.",
           "subtract_entities": "Sensors whose values are subtracted from the total.",
           "output_unit": "Unit of measurement of the created sensor.",
           "update_interval": "0 = recalculate every time an input changes. Otherwise recalculate every this many seconds (max 3600).",
-          "outlier_threshold": "Optional, in the output unit. When the calculated power is above this value (positive or negative), the sensor keeps its previous value instead. Leave empty or 0 to disable."
+          "outlier_threshold": "Optional, in the output unit. When the calculated power is above this value (positive or negative), the sensor keeps its previous value instead. Leave empty or 0 to disable.",
+          "ignore_unavailable": "When on, unavailable inputs count as 0 and the sensor only becomes unavailable if all inputs are. When off, any unavailable input makes the sensor unavailable."
         }
       },
       "units": {
@@ -85,14 +87,16 @@
           "subtract_entities": "Sensors to subtract",
           "output_unit": "Output unit",
           "update_interval": "Update interval",
-          "outlier_threshold": "Outlier threshold"
+          "outlier_threshold": "Outlier threshold",
+          "ignore_unavailable": "Ignore unavailable inputs"
         },
         "data_description": {
           "sum_entities": "Sensors whose values are added to the total.",
           "subtract_entities": "Sensors whose values are subtracted from the total.",
           "output_unit": "Unit of measurement of the created sensor.",
           "update_interval": "0 = recalculate every time an input changes. Otherwise recalculate every this many seconds (max 3600).",
-          "outlier_threshold": "Optional, in the output unit. When the calculated power is above this value (positive or negative), the sensor keeps its previous value instead. Leave empty or 0 to disable."
+          "outlier_threshold": "Optional, in the output unit. When the calculated power is above this value (positive or negative), the sensor keeps its previous value instead. Leave empty or 0 to disable.",
+          "ignore_unavailable": "When on, unavailable inputs count as 0 and the sensor only becomes unavailable if all inputs are. When off, any unavailable input makes the sensor unavailable."
         }
       },
       "units": {
@@ -112,6 +116,12 @@
         "energy": "Energy",
         "power": "Power"
       }
+    }
+  },
+  "issues": {
+    "missing_entities": {
+      "title": "{name}: input sensors no longer exist",
+      "description": "These input sensors of **{name}** no longer exist in Home Assistant:\n\n{entities}\n\nEnergy sensors keep the last known value of a missing input. Power sensors become unavailable unless 'Ignore unavailable inputs' is on.\n\nIf the entity was renamed or replaced, open the integration's **Configure** options and remove or replace it. This issue clears automatically when the input exists again or is removed from the list."
     }
   }
 }

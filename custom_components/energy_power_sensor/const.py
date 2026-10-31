@@ -15,6 +15,7 @@ CONF_OUTPUT_UNIT = "output_unit"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_MAX_POWER = "max_power"
 CONF_OUTLIER_THRESHOLD = "outlier_threshold"
+CONF_IGNORE_UNAVAILABLE = "ignore_unavailable"
 
 TYPE_ENERGY = "energy"
 TYPE_POWER = "power"

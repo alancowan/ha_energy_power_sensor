@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er, selector
 
 from .const import (
+    CONF_IGNORE_UNAVAILABLE,
     CONF_INPUT_UNITS,
     CONF_MAX_POWER,
     CONF_OUTLIER_THRESHOLD,
@@ -77,6 +78,9 @@ def _inputs_schema(sensor_type: str) -> vol.Schema:
             selector.NumberSelectorConfig(
                 min=0, step="any", mode=selector.NumberSelectorMode.BOX
             )
+        )
+        schema[vol.Optional(CONF_IGNORE_UNAVAILABLE, default=False)] = (
+            selector.BooleanSelector()
         )
     return vol.Schema(schema)
 

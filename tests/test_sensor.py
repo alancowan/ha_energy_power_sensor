@@ -11,9 +11,11 @@ from pytest_homeassistant_custom_component.common import (
 
 from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 
 from custom_components.energy_power_sensor.const import (
+    CONF_IGNORE_UNAVAILABLE,
     CONF_INPUT_UNITS,
     CONF_MAX_POWER,
     CONF_OUTLIER_THRESHOLD,
@@ -229,3 +231,74 @@ async def test_energy_wrong_unit_input_ignored(hass: HomeAssistant) -> None:
         },
     )
     assert float(hass.states.get(eid).state) == 5000.0
+
+
+async def test_power_ignore_unavailable(hass: HomeAssistant) -> None:
+    _set(hass, "sensor.a", 100, "W")
+    _set(hass, "sensor.b", 50, "W")
+    eid = await _setup(
+        hass,
+        "power",
+        **{
+            CONF_SUM_ENTITIES: ["sensor.a"],
+            CONF_SUBTRACT_ENTITIES: ["sensor.b"],
+            CONF_OUTPUT_UNIT: "W",
+            CONF_IGNORE_UNAVAILABLE: True,
+        },
+    )
+    assert hass.states.get(eid).state == "50.0"
+
+    hass.states.async_set("sensor.b", STATE_UNAVAILABLE)
+    await hass.async_block_till_done()
+    state = hass.states.get(eid)
+    assert state.state == "100.0"
+    assert state.attributes["unavailable_entities"] == ["sensor.b"]
+
+    hass.states.async_set("sensor.a", STATE_UNAVAILABLE)
+    await hass.async_block_till_done()
+    assert hass.states.get(eid).state == STATE_UNAVAILABLE
+
+
+async def test_missing_entity_raises_repair_issue(hass: HomeAssistant) -> None:
+    _set(hass, "sensor.a", 1, "kWh")
+    _set(hass, "sensor.b", 2, "kWh")
+    eid = await _setup(
+        hass,
+        "energy",
+        **{
+            CONF_SUM_ENTITIES: ["sensor.a", "sensor.b"],
+            CONF_OUTPUT_UNIT: "kWh",
+        },
+    )
+    entry_id = hass.config_entries.async_entries("energy_power_sensor")[0].entry_id
+    issue_id = f"missing_entities_{entry_id}"
+    issues = ir.async_get(hass)
+    assert issues.async_get_issue(DOMAIN, issue_id) is None
+
+    # Entity deleted: energy total keeps its last value and an issue is raised.
+    hass.states.async_remove("sensor.b")
+    await hass.async_block_till_done()
+    state = hass.states.get(eid)
+    assert float(state.state) == 3.0
+    assert state.attributes["unavailable_entities"] == ["sensor.b"]
+    issue = issues.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert "sensor.b" in issue.translation_placeholders["entities"]
+
+    # Entity comes back: the issue clears.
+    _set(hass, "sensor.b", 2.5, "kWh")
+    await hass.async_block_till_done()
+    assert float(hass.states.get(eid).state) == 3.5
+    assert issues.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_unavailable_entity_does_not_raise_issue(hass: HomeAssistant) -> None:
+    _set(hass, "sensor.a", 100, "W")
+    await _setup(
+        hass,
+        "power",
+        **{CONF_SUM_ENTITIES: ["sensor.a"], CONF_OUTPUT_UNIT: "W"},
+    )
+    hass.states.async_set("sensor.a", STATE_UNAVAILABLE)
+    await hass.async_block_till_done()
+    assert not ir.async_get(hass).issues
